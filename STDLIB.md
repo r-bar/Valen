@@ -5,6 +5,7 @@ Each module is documented below with its types, functions, and usage examples.
 
 ## Table of Contents
 
+- [Builtins](#builtins--core-language-types)
 - [collections.list](#collectionslist--dynamic-list)
 - [collections.hashmap](#collectionshashmap--hash-map)
 - [collections.hashset](#collectionshashset--hash-set)
@@ -31,7 +32,374 @@ Each module is documented below with its types, functions, and usage examples.
 
 ---
 
-## `collections.list` — Dynamic List
+## `builtins` — Core Language Types
+
+The builtins module provides the primitive types, core data structures (Opt,
+Result, tuples), and fundamental operations (arithmetic, comparison, drop,
+clone) that the language depends on. Builtins are automatically included in
+every Valen program from the `src/builtins/resources` directory (pointed to
+via `--builtins-dir-override`).
+
+Builtins are imported with the `v.builtins.*` prefix:
+
+```vale
+import v.builtins.arith.*;
+import v.builtins.opt.*;
+import v.builtins.result.*;
+import v.builtins.drop.*;
+import v.builtins.clone.*;
+import v.builtins.logic.*;
+import v.builtins.str.*;
+import v.builtins.panic.*;
+import v.builtins.arrays.*;
+import v.builtins.streq.*;
+```
+
+### Primitive Types
+
+The compiler provides these primitive types, defined as builtin kinds:
+
+```vale
+int     // 32-bit signed integer
+i64     // 64-bit signed integer
+bool    // boolean
+float   // 32-bit floating point
+str     // string
+void    // unit type (absence of value)
+__Never // bottom type (for panics/abort)
+```
+
+### Arithmetic (`arith`)
+
+Arithmetic and comparison operators on primitives:
+
+```vale
++(a int, b int) int        // addition
+-(a int, b int) int        // subtraction
+*(a int, b int) int        // multiplication
+/(a int, b int) int        // division
+mod(a int, b int) int      // modulo
+
+-(x int) int               // negation
+
+==(a int, b int) bool      // equality
+!=(a &T, b &T) bool        // inequality
+<(a int, b int) bool       // less than
+>(a int, b int) bool       // greater than
+<=(a int, b int) bool      // less or equal
+>=(a int, b int) bool      // greater or equal
+
+// Same operations exist for i64, float, and bool types.
+// Generic region-parameterized variants exist, e.g.:
+// func +<gl', gr'>(left &int in gl, right &int in gr) int
+```
+
+Type conversion arithmetic:
+
+```vale
+float(x &int) float        // int → float
+int(x &float) int          // float → int
+i64(x &int) i64            // int → i64
+float(i64)(x &i64) float   // i64 → float (via builtin)
+```
+
+### String Operations (`str`)
+
+```vale
+str(x int) str             // int to string
+str(x i64) str             // i64 to string
+str(x float) str           // float to string
+
++(a &str, b &str) str      // string concatenation
+len(s &str) int            // string length
+
+strtoascii(s &str, begin int, end int) int   // char to ASCII code
+strfromascii(code int) str                    // ASCII code to string
+
+strindexof(haystack, hBegin, hEnd, needle, nBegin, nEnd) int  // find substring
+substring(str, begin, end) str                                 // extract substring
+
+strcmp(a, aBegin, aEnd, b, bBegin, bEnd) int  // lexicographic cmp
+```
+
+### String Equality (`streq`)
+
+```vale
+streq(a, aBegin, aEnd, b, bBegin, bEnd) bool  // string equality by slices
+extern func __vbi_streq(...) bool
+```
+
+### Boolean Logic (`logic`)
+
+```vale
+not(b bool) bool                             // logical NOT
+==(left bool, right bool) bool               // boolean equality
+!=<T, ga', gb'>(a &T, ga; b &T, gb) bool    // inequality
+```
+
+### `Opt<T>` — Optional Value (`opt`)
+
+The `Opt<T>` sealed interface provides nullable values with two variants:
+
+```vale
+#!DeriveInterfaceDrop
+sealed interface Opt<T> { }
+
+#!DeriveStructDrop
+struct Some<T> { value T; }
+impl<T> Opt<T> for Some<T>;
+
+#!DeriveStructDrop
+struct None<T> { }
+impl<T> Opt<T> for None<T>;
+```
+
+Abstract functions and their concrete implementations:
+
+```vale
+// Drop
+abstract func drop<T>(virtual opt Opt<T>) where func drop(T)void;
+func drop<T>(opt Some<T>) where func drop(T)void { [x] = ^opt; }
+func drop<T>(opt None<T>) { [ ] = ^opt; }
+
+// isEmpty — check for None
+abstract func isEmpty<T, g'>(virtual opt &Opt<T> in g) bool;
+func isEmpty<T, g'>(opt &None<T> in g) bool { return true; }
+func isEmpty<T, g'>(opt &Some<T> in g) bool { return false; }
+
+// get — unwrap (panics on None)
+abstract func get<T>(virtual opt Opt<T>) T;
+func get<T>(opt None<T>) T { panic("Called get() on a None!"); }
+func get<T>(opt Some<T>) T { [value] = ^opt; return ^value; }
+
+// get with group borrowing
+abstract func get<T, g'>(virtual opt &Opt<T> in g) &T in g...;
+func get<T, g'>(opt &None<T> in g) &T in g... { panic("Called get() on a None!"); }
+func get<T, g'>(opt &Some<T> in g) &T in g... { return &opt.value; }
+```
+
+### `Result<OkType, ErrType>` — Success or Failure (`result`)
+
+```vale
+#!DeriveInterfaceDrop
+sealed interface Result<OkType, ErrType> { }
+
+#!DeriveStructDrop
+struct Ok<OkType, ErrType> { value OkType; }
+impl<OkType, ErrType> Result<OkType, ErrType> for Ok<OkType, ErrType>;
+
+#!DeriveStructDrop
+struct Err<OkType, ErrType> { value ErrType; }
+impl<OkType, ErrType> Result<OkType, ErrType> for Err<OkType, ErrType>;
+```
+
+Abstract functions:
+
+```vale
+abstract func is_ok<OkType, ErrType, g'>(virtual result &Result<O,E> in g) bool;
+func is_ok<O,E,g'>(ok &Ok<O,E> in g) bool { return true; }
+func is_ok<O,E,g'>(err &Err<O,E> in g) bool { return false; }
+func is_err<O,E,g'>(result &Result<O,E> in g) bool { return not is_ok(result); }
+
+abstract func expect<O,E>(virtual result Result<O,E>, msg str) O;
+func expect<O,E>(err Err<O,E>, msg str) O { panic(msg); }
+func expect<O,E>(ok Ok<O,E>, msg str) O { [value] = ^ok; return ^value; }
+
+abstract func expect_err<O,E>(virtual result Result<O,E>, msg str) E;
+func expect_err<O,E>(ok Ok<O,E>, msg str) E { panic("expect_err on Ok!"); }
+func expect_err<O,E>(err Err<O,E>, msg str) E { [value] = ^err; return ^value; }
+
+// Borrow variants with groups
+abstract func expect<O,E,g'>(virtual result &Result<O,E> in g, msg str) &O in g...;
+abstract func expect_err<O,E,g'>(virtual result &Result<O,E> in g, msg str) &E in g...;
+```
+
+### Drop (`drop`)
+
+Destructors for primitive types and generic references:
+
+```vale
+func drop(x int) {}
+func drop(x bool) {}
+func drop(x float) {}
+func drop(x void) {}
+func drop(x i64) {}
+func drop(x str) {}
+func drop<T, g'>(x &T in g) { }
+
+func drop<T>(v void, x T) where func drop(T)void { drop(^x) }
+```
+
+### Clone (`clone`)
+
+```vale
+func clone(x int) int { x }
+func clone(x bool) bool { x }
+func clone(x float) float { x }
+func clone(x void) { }
+func clone(x i64) i64 { x }
+func clone(x str) str { x }
+
+// Borrow variants for post-kind-mutability-cut where clauses:
+func clone<g'>(x &int in g) int { __copy_prim(x) }
+func clone<g'>(x &bool in g) bool { __copy_prim(x) }
+func clone<g'>(x &float in g) float { __copy_prim(x) }
+func clone<g'>(x &i64 in g) i64 { __copy_prim(x) }
+```
+
+### Implicit Clone (`implicit_clone`)
+
+Used internally by the type system for automatic copies of primitives:
+
+```vale
+func implicit_clone<g'>(x &int in g) int { return __copy_prim(x); }
+func implicit_clone<g'>(x &bool in g) bool { return __copy_prim(x); }
+func implicit_clone<g'>(x &float in g) float { return __copy_prim(x); }
+func implicit_clone<g'>(x &void in g) void { }
+func implicit_clone<g'>(x &i64 in g) i64 { return __copy_prim(x); }
+```
+
+### Downcast (`as`)
+
+Downcast from an interface to a concrete subtype:
+
+```vale
+// Borrow downcast — returns Result<&SubType, &SuperType>
+extern("vale_as_subtype")
+func try_as<SubType, SuperType, g'>(left &SuperType in g) Result<&SubType, &SuperType>
+where implements(SubType, SuperType);
+
+// Owning downcast — returns Result<SubType, SuperType>
+extern("vale_as_subtype")
+func try_take_as<SubType, SuperType>(left SuperType) Result<SubType, SuperType>
+where implements(SubType, SuperType);
+```
+
+### Reference Identity (`sameinstance`)
+
+```vale
+extern("vale_same_instance")
+func ===<T, gl', gr'>(left &T in gl, right &T in gr) bool;
+```
+
+### Weak References (`weak`)
+
+```vale
+extern("vale_lock_weak")
+func lock<T>(w weak T) Opt<&T>;
+```
+
+### Panic (`panic`)
+
+```vale
+extern func __vbi_panic() __Never;
+
+func panic() __Never { return __vbi_panic(); }
+func panic(msg str) __Never {
+  print(&msg);
+  print(&"\n");
+  return __vbi_panic();
+}
+```
+
+### Print (`print`)
+
+```vale
+func print<g'>(s &str in g) { __vbi_printstr(s, 0, len(s)) }
+extern func __vbi_printstr<g'>(s &str in g, start int, length int);
+```
+
+### Tuples (`tup0`–`tupN`)
+
+Pre-defined tuple types with numeric-indexed fields:
+
+```vale
+struct Tup0 { }
+#!DeriveStructDrop
+struct Tup1<T0> { 0 T0; }
+#!DeriveStructDrop
+struct Tup2<T0, T1> { 0 T0; 1 T1; }
+#!DeriveStructDrop
+struct Tup3<T0, T1, T2> { 0 T0; 1 T1; 2 T2; }
+```
+
+Tuples are constructed with parentheses:
+
+```vale
+t = (true, 42);       // type Tup2<bool, int>
+t.1                    // access second element → 42
+```
+
+### Functor1 (`functor1`)
+
+Default callable trampoline for zero-argument void-return lambdas:
+
+```vale
+func __call<P1, R>(v void, param P1) R
+where func drop(P1)R { drop(^param) }
+```
+
+### Arrays (`arrays`)
+
+Array builtins (externals to the C++ backend):
+
+```vale
+// Static-sized array:
+len<S Int, E, g'>(arr &StaticArray<S, E> in g) int
+drop_into<S Int, E, F, g'>(arr StaticArray<S, E>, consumer &F in g) void
+drop<S Int, E>(arr StaticArray<S, E>) void where func drop(E)void
+
+// Runtime-sized array:
+Array<E>(size int) []E
+push<E, g'>(arr &[]E in g, newElement E) void
+pop<E, g'>(arr &[]E in g) E
+len<E, g'>(arr &[]E in g) int
+capacity<E, g'>(arr &[]E in g) int
+drop<E>(arr []E) void where func drop(E)void
+
+// Array with generator callable:
+Array<E, G, g'>(n int, generator &G in g) []E
+where func(&G, int)E, func drop(G)void
+```
+
+### Main Args (`mainargs`)
+
+Access command-line arguments:
+
+```vale
+extern func numMainArgs() int;
+func getMainArg(i int) str
+```
+
+### Migrate (`migrate`)
+
+Move elements between arrays (currently stubbed):
+
+```vale
+func migrate<E, g'>(from []E, to &[]E in g) void
+func migrate<E, N Int, g'>(from StaticArray<N, E>, to &[]E in g) void
+```
+
+### Compiler Intrinsics
+
+Certain functions are provided directly by the compiler:
+
+```vale
+__copy_prim(x)     // copy a primitive value
+__vbi_panic()      // abort execution (__Never return)
+__vbi_printstr(s, start, length)  // raw string output
+__vbi_addStr(a, aBegin, aLen, b, bBegin, bLen) str  // string concat
+__vbi_strLength(s) int    // string length
+__vbi_streq(...) bool     // string equality
+__vbi_strtoascii(...) int // char to ASCII
+__vbi_strfromascii(int) str // ASCII to char
+__vbi_strindexof(...) int // substring index
+__vbi_substring(...) str  // substring extraction
+__vbi_strcmp(...) int     // string comparison
+__vbi_addI32(a, b) int    // 32-bit addition
+__vbi_negateI32(x) int    // 32-bit negation
+__vbi_multiplyI32(...) int // etc.
+```
 
 A generic, dynamically-growable list backed by an `Array<E>`. Provides element
 access, search, iteration, functional combinators, and conversion to/from
