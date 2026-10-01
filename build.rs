@@ -1,4 +1,3 @@
-
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
@@ -32,16 +31,19 @@ fn main() {
   println!("cargo:rustc-link-search=native={}", build_dir.display());
   println!("cargo:rustc-link-lib=static=backend_lib");
 
-  let llvm_libdir = run(&llvm_config, &["--libdir"]);
-  println!("cargo:rustc-link-search=native={}", llvm_libdir);
-  println!("cargo:rustc-link-arg=-Wl,-rpath,{}", llvm_libdir);
+  let shared_mode = run(&llvm_config, &["--shared-mode"]).trim() == "shared";
 
-  let llvm_libs = run(
-    &llvm_config,
-    &[
-      "--libs",
-      "--link-shared",
-      "core",
+  if shared_mode {
+    let llvm_libdir = run(&llvm_config, &["--libdir"]);
+    println!("cargo:rustc-link-search=native={}", llvm_libdir);
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", llvm_libdir);
+  } else {
+    let llvm_libdir = run(&llvm_config, &["--libdir"]);
+    println!("cargo:rustc-link-search=native={}", llvm_libdir);
+  }
+
+  let llvm_lib_args = if shared_mode {
+    vec!["--libs", "--link-shared", "core",
       "support",
       "irreader",
       "passes",
@@ -59,16 +61,40 @@ fn main() {
       "webassemblycodegen",
       "webassemblydesc",
       "webassemblydisassembler",
-      "webassemblyinfo",
-    ],
-  );
+      "webassemblyinfo"]
+  } else {
+    vec!["--libs", "core",
+      "support",
+      "irreader",
+      "passes",
+      "aarch64asmparser",
+      "aarch64codegen",
+      "aarch64desc",
+      "aarch64disassembler",
+      "aarch64info",
+      "x86asmparser",
+      "x86codegen",
+      "x86desc",
+      "x86disassembler",
+      "x86info",
+      "webassemblyasmparser",
+      "webassemblycodegen",
+      "webassemblydesc",
+      "webassemblydisassembler",
+      "webassemblyinfo"]
+  };
+  let llvm_libs = run(&llvm_config, &llvm_lib_args);
   for lib in llvm_libs.split_whitespace() {
     if let Some(name) = lib.strip_prefix("-l") {
-      println!("cargo:rustc-link-lib=dylib={}", name);
+      if shared_mode {
+        println!("cargo:rustc-link-lib=dylib={}", name);
+      } else {
+        println!("cargo:rustc-link-lib=static={}", name);
+      }
     }
   }
 
-  let system_libs = run(&llvm_config, &["--system-libs", "--link-shared"]);
+  let system_libs = run(&llvm_config, &["--system-libs"]);
   for lib in system_libs.split_whitespace() {
     if let Some(name) = lib.strip_prefix("-l") {
       println!("cargo:rustc-link-lib=dylib={}", name);
